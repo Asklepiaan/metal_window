@@ -29,6 +29,12 @@ bool windowShouldClose(MetalWindowHandle window);
 
 void clearWindow(MetalWindowHandle window, unsigned char r, unsigned char g, unsigned char b);
 
+struct PlushImage* captureWindow(MetalWindowHandle window);
+
+void getMousePosition(MetalWindowHandle window, int* x, int* y);
+
+bool getMouseButtonState(MetalWindowHandle window, int button);
+
 #ifdef __cplusplus
 }
 #endif

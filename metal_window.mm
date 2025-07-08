@@ -19,6 +19,7 @@ struct PlushImage {
 @property (strong) id<MTLCommandQueue> commandQueue;
 @property (assign) BOOL needsRedraw;
 @property (assign) MTLClearColor clearColor;
+@property (copy) void (^captureBlock)(id<MTLTexture>);
 - (void)updateTextureWithImage:(const struct PlushImage*)image;
 - (void)setClearColorRed:(float)r green:(float)g blue:(float)b;
 @end
@@ -30,6 +31,13 @@ struct PlushImage {
 @property (assign) int height;
 @property (assign) bool shouldClose;
 @property (strong) id eventMonitor;
+
+@property (assign) int mouseX;
+@property (assign) int mouseY;
+@property (assign) BOOL mouseButtonLeft;
+@property (assign) BOOL mouseButtonRight;
+@property (assign) BOOL mouseButtonMiddle;
+
 - (instancetype)initWithTitle:(NSString*)title width:(int)width height:(int)height;
 @end
 
@@ -208,6 +216,12 @@ struct PlushImage {
 		
 		[commandBuffer commit];
 		self.needsRedraw = NO;
+
+		if (self.captureBlock) {
+			void (^block)(id<MTLTexture>) = self.captureBlock;
+			self.captureBlock = nil;
+			block(view.currentDrawable.texture);
+		}
 	}
 }
 
@@ -215,6 +229,7 @@ struct PlushImage {
 
 @implementation MetalWindow {
 	id _eventMonitor;
+	id _mouseEventMonitor;
 }
 
 - (instancetype)initWithTitle:(NSString*)title width:(int)width height:(int)height {
@@ -223,6 +238,12 @@ struct PlushImage {
 		_width = width;
 		_height = height;
 		_shouldClose = NO;
+
+		_mouseX = 0;
+		_mouseY = 0;
+		_mouseButtonLeft = NO;
+		_mouseButtonRight = NO;
+		_mouseButtonMiddle = NO;
 		
 		NSRect rect = NSMakeRect(0, 0, width, height);
 		_window = [[NSWindow alloc] initWithContentRect:rect
@@ -235,6 +256,7 @@ struct PlushImage {
 		[_window setLevel:NSNormalWindowLevel];
 		[_window setContentMinSize:rect.size];
 		[_window setContentMaxSize:rect.size];
+		[_window setAcceptsMouseMovedEvents:YES];
 		
 		id<MTLDevice> device = MTLCreateSystemDefaultDevice();
 		_metalView = [[MetalImageView alloc] initWithFrame:rect device:device];
@@ -252,6 +274,53 @@ struct PlushImage {
 			}
 			return event;
 		}];
+
+		_mouseEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:
+			NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp |
+			NSEventMaskRightMouseDown | NSEventMaskRightMouseUp |
+			NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp |
+			NSEventMaskMouseMoved |
+			NSEventMaskLeftMouseDragged | NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDragged
+			handler:^NSEvent*(NSEvent* event) {
+				MetalWindow* self = weakSelf;
+				if (!self) return event;
+				
+				if (event.window == self.window) {
+					NSPoint location = [event locationInWindow];
+					NSView* contentView = self.window.contentView;
+
+					self.mouseX = (int)location.x;
+					self.mouseY = (int)(contentView.bounds.size.height - location.y);
+					
+					switch (event.type) {
+						case NSEventTypeLeftMouseDown:
+							self.mouseButtonLeft = YES;
+							break;
+						case NSEventTypeLeftMouseUp:
+							self.mouseButtonLeft = NO;
+							break;
+						case NSEventTypeRightMouseDown:
+							self.mouseButtonRight = YES;
+							break;
+						case NSEventTypeRightMouseUp:
+							self.mouseButtonRight = NO;
+							break;
+						case NSEventTypeOtherMouseDown:
+							if (event.buttonNumber == 2) {
+								self.mouseButtonMiddle = YES;
+							}
+							break;
+						case NSEventTypeOtherMouseUp:
+							if (event.buttonNumber == 2) {
+								self.mouseButtonMiddle = NO;
+							}
+							break;
+						default:
+							break;
+					}
+				}
+				return event;
+			}];
 	}
 	return self;
 }
@@ -264,6 +333,9 @@ struct PlushImage {
 - (void)dealloc {
 	if (_eventMonitor) {
 		[NSEvent removeMonitor:_eventMonitor];
+	}
+	if (_mouseEventMonitor) {
+		[NSEvent removeMonitor:_mouseEventMonitor];
 	}
 }
 
@@ -348,4 +420,117 @@ void updateWindow(MetalWindowHandle handle) {
 bool windowShouldClose(MetalWindowHandle handle) {
 	MetalWindow* mw = (__bridge MetalWindow*)handle;
 	return mw.shouldClose;
+}
+
+struct PlushImage* captureWindow(MetalWindowHandle handle) {
+	@autoreleasepool {
+		MetalWindow* mw = (__bridge MetalWindow*)handle;
+		MetalImageView* metalView = mw.metalView;
+		
+		if (!metalView) return NULL;
+
+		metalView.captureBlock = nil;
+		
+		__block struct PlushImage* capturedImage = NULL;
+		__block BOOL done = NO;
+
+		metalView.captureBlock = ^(id<MTLTexture> texture) {
+			if (!texture) {
+				done = YES;
+				return;
+			}
+			
+			int width = (int)texture.width;
+			int height = (int)texture.height;
+			int bytesPerRow = 4 * width;
+			int totalBytes = bytesPerRow * height;
+			
+			id<MTLDevice> device = metalView.device;
+			id<MTLBuffer> buffer = [device newBufferWithLength:totalBytes
+													  options:MTLResourceStorageModeShared];
+			if (!buffer) {
+				done = YES;
+				return;
+			}
+			
+			id<MTLCommandQueue> commandQueue = metalView.commandQueue;
+			id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
+			id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
+			
+			[blitEncoder copyFromTexture:texture
+							 sourceSlice:0
+							 sourceLevel:0
+							sourceOrigin:MTLOriginMake(0, 0, 0)
+							  sourceSize:MTLSizeMake(width, height, 1)
+								toBuffer:buffer
+					   destinationOffset:0
+				  destinationBytesPerRow:bytesPerRow
+				destinationBytesPerImage:totalBytes];
+			
+			[blitEncoder endEncoding];
+			[commandBuffer commit];
+			[commandBuffer waitUntilCompleted];
+			
+			unsigned char* bgraData = (unsigned char*)[buffer contents];
+			unsigned char* rgbaData = (unsigned char*)malloc(totalBytes);
+			if (!rgbaData) {
+				done = YES;
+				return;
+			}
+
+			for (int i = 0; i < totalBytes; i += 4) {
+				rgbaData[i]   = bgraData[i+2];
+				rgbaData[i+1] = bgraData[i+1];
+				rgbaData[i+2] = bgraData[i];
+				rgbaData[i+3] = bgraData[i+3];
+			}
+			
+			capturedImage = (struct PlushImage*)malloc(sizeof(struct PlushImage));
+			if (!capturedImage) {
+				free(rgbaData);
+				done = YES;
+				return;
+			}
+			
+			capturedImage->width = width;
+			capturedImage->height = height;
+			capturedImage->pixels = rgbaData;
+			done = YES;
+		};
+
+		[metalView setNeedsDisplay:YES];
+		[metalView display];
+
+		NSRunLoop* runLoop = [NSRunLoop currentRunLoop];
+		NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:0.1];
+		while (!done && [runLoop runMode:NSDefaultRunLoopMode beforeDate:deadline]) {
+			deadline = [NSDate dateWithTimeIntervalSinceNow:0.1];
+		}
+
+		if (!done) {
+			metalView.captureBlock = nil;
+		}
+		
+		return capturedImage;
+	}
+}
+
+void getMousePosition(MetalWindowHandle handle, int* x, int* y) {
+	@autoreleasepool {
+		MetalWindow* mw = (__bridge MetalWindow*)handle;
+		if (x) *x = mw.mouseX;
+		if (y) *y = mw.mouseY;
+	}
+}
+
+bool getMouseButtonState(MetalWindowHandle handle, int button) {
+	@autoreleasepool {
+		MetalWindow* mw = (__bridge MetalWindow*)handle;
+		switch (button) {
+			case 0: return mw.mouseButtonLeft;
+			case 1: return mw.mouseButtonRight;
+			case 2: return mw.mouseButtonMiddle;
+			default: return false;
+		}
+	}
 }
