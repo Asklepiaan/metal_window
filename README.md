@@ -4,11 +4,7 @@
 ## Include in my project
 * Copy both files into your project root
 * Add `#include "metal_window.h"` to the top of your project
-* Add ```cpp
-struct PlushImage {
-	int width, height;
-	unsigned char* pixels;
-};``` to your project
+* Add `struct PlushImage {int width, height; unsigned char* pixels; };` to your project
 
 ## Build my project
 * Customise these commands to your needs:
