@@ -272,7 +272,7 @@ struct PlushImage {
 				[weakSelf.window performClose:nil];
 				return nil;
 			}
-			return event;
+			return nil;
 		}];
 
 		_mouseEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:
