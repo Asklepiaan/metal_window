@@ -18,7 +18,6 @@ struct PlushImage {
 @property (strong) id<MTLBuffer> vertexBuffer;
 @property (strong) id<MTLCommandQueue> commandQueue;
 @property (assign) BOOL needsRedraw;
-@property (assign) MTLClearColor clearColor;
 @property (copy) void (^captureBlock)(id<MTLTexture>);
 - (void)updateTextureWithImage:(const struct PlushImage*)image;
 - (void)setClearColorRed:(float)r green:(float)g blue:(float)b;
