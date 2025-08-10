@@ -6,6 +6,8 @@
 struct PlushImage {
 	int width, height;
 	unsigned char* pixels;
+	int reflectivityWidth, reflectivityHeight;
+	unsigned char* reflectivity;
 };
 
 #if !__has_feature(objc_arc)
@@ -63,24 +65,24 @@ struct PlushImage {
 	@"#include <metal_stdlib>\n"
 	"using namespace metal;\n"
 	"struct Vertex {\n"
-	"    float4 position [[position]];\n"
-	"    float2 texCoord;\n"
+	"	float4 position [[position]];\n"
+	"	float2 texCoord;\n"
 	"};\n"
 	"vertex Vertex vertexShader(\n"
-	"    uint vertexID [[vertex_id]],\n"
-	"    constant float4 *vertices [[buffer(0)]]\n"
+	"	uint vertexID [[vertex_id]],\n"
+	"	constant float4 *vertices [[buffer(0)]]\n"
 	") {\n"
-	"    Vertex out;\n"
-	"    out.position = float4(vertices[vertexID].xy, 0.0, 1.0);\n"
-	"    out.texCoord = vertices[vertexID].zw;\n"
-	"    return out;\n"
+	"	Vertex out;\n"
+	"	out.position = float4(vertices[vertexID].xy, 0.0, 1.0);\n"
+	"	out.texCoord = vertices[vertexID].zw;\n"
+	"	return out;\n"
 	"}\n"
 	"fragment float4 fragmentShader(\n"
-	"    Vertex in [[stage_in]],\n"
-	"    texture2d<float> tex [[texture(0)]],\n"
-	"    sampler smp [[sampler(0)]]\n"
+	"	Vertex in [[stage_in]],\n"
+	"	texture2d<float> tex [[texture(0)]],\n"
+	"	sampler smp [[sampler(0)]]\n"
 	") {\n"
-	"    return tex.sample(smp, in.texCoord);\n"
+	"	return tex.sample(smp, in.texCoord);\n"
 	"}";
 
 	NSError* error = nil;
@@ -446,7 +448,7 @@ struct PlushImage* captureWindow(MetalWindowHandle handle) {
 			
 			id<MTLDevice> device = metalView.device;
 			id<MTLBuffer> buffer = [device newBufferWithLength:totalBytes
-													  options:MTLResourceStorageModeShared];
+													   options:MTLResourceStorageModeShared];
 			if (!buffer) {
 				done = YES;
 				return;
