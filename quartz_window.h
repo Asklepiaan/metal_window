@@ -7,6 +7,51 @@ extern "C" {
 struct PlushImage;
 
 typedef void* QuartzWindowHandle;
+extern bool keyreturn;
+extern bool keyup;
+extern bool keydown;
+extern bool keyleft;
+extern bool keyright;
+extern bool keya;
+extern bool keyb;
+extern bool keyc;
+extern bool keyd;
+extern bool keye;
+extern bool keyf;
+extern bool keyg;
+extern bool keyh;
+extern bool keyi;
+extern bool keyj;
+extern bool keyk;
+extern bool keyl;
+extern bool keym;
+extern bool keyn;
+extern bool keyo;
+extern bool keyp;
+extern bool keyq;
+extern bool keyr;
+extern bool keys;
+extern bool keyt;
+extern bool keyu;
+extern bool keyv;
+extern bool keyw;
+extern bool keyx;
+extern bool keyy;
+extern bool keyz;
+extern bool key1;
+extern bool key2;
+extern bool key3;
+extern bool key4;
+extern bool key5;
+extern bool key6;
+extern bool key7;
+extern bool key8;
+extern bool key9;
+extern bool key0;
+extern bool keyminus;
+extern bool keyback;
+extern bool keydelete;
+extern bool keyspace;
 
 QuartzWindowHandle createWindow(const char* title, int width, int height);
 void closeWindow(QuartzWindowHandle window);
@@ -22,6 +67,7 @@ void clearWindow(QuartzWindowHandle window, unsigned char r, unsigned char g, un
 struct PlushImage* captureWindow(QuartzWindowHandle window);
 void getMousePosition(QuartzWindowHandle window, int* x, int* y);
 bool getMouseButtonState(QuartzWindowHandle window, int button);
+void updateKeyboardState();
 
 #ifdef __cplusplus
 }

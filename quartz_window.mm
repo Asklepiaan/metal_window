@@ -1,12 +1,120 @@
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
+#include <Carbon/Carbon.h>
 #include "quartz_window.h"
 #include <string.h>
 
 struct PlushImage {
 	int width, height;
 	unsigned char* pixels;
+	int reflectivityWidth, reflectivityHeight;
+	unsigned char* reflectivity;
 };
+
+bool keyreturn = false;
+bool keyup = false;
+bool keydown = false;
+bool keyleft = false;
+bool keyright = false;
+bool keya = false;
+bool keyb = false;
+bool keyc = false;
+bool keyd = false;
+bool keye = false;
+bool keyf = false;
+bool keyg = false;
+bool keyh = false;
+bool keyi = false;
+bool keyj = false;
+bool keyk = false;
+bool keyl = false;
+bool keym = false;
+bool keyn = false;
+bool keyo = false;
+bool keyp = false;
+bool keyq = false;
+bool keyr = false;
+bool keys = false;
+bool keyt = false;
+bool keyu = false;
+bool keyv = false;
+bool keyw = false;
+bool keyx = false;
+bool keyy = false;
+bool keyz = false;
+bool key1 = false;
+bool key2 = false;
+bool key3 = false;
+bool key4 = false;
+bool key5 = false;
+bool key6 = false;
+bool key7 = false;
+bool key8 = false;
+bool key9 = false;
+bool key0 = false;
+bool keyminus = false;
+bool keyback = false;
+bool keydelete = false;
+bool keyspace = false;
+
+void updateKeyboardState() {
+	KeyMap keyState;
+	GetKeys(keyState);
+	
+	const UInt8* bytes = reinterpret_cast<const UInt8*>(keyState);
+
+	auto isKeyDown = [bytes](unsigned short keyCode) -> bool {
+		const size_t byteIndex = keyCode / 8;
+		const UInt8 bitMask = 1 << (keyCode % 8);
+		return (bytes[byteIndex] & bitMask) != 0;
+	};
+
+	keyreturn = isKeyDown(kVK_Return);
+	keyup     = isKeyDown(kVK_UpArrow);
+	keydown   = isKeyDown(kVK_DownArrow);
+	keyleft   = isKeyDown(kVK_LeftArrow);
+	keyright  = isKeyDown(kVK_RightArrow);
+	keya = isKeyDown(kVK_ANSI_A);
+	keyb = isKeyDown(kVK_ANSI_B);
+	keyc = isKeyDown(kVK_ANSI_C);
+	keyd = isKeyDown(kVK_ANSI_D);
+	keye = isKeyDown(kVK_ANSI_E);
+	keyf = isKeyDown(kVK_ANSI_F);
+	keyg = isKeyDown(kVK_ANSI_G);
+	keyh = isKeyDown(kVK_ANSI_H);
+	keyi = isKeyDown(kVK_ANSI_I);
+	keyj = isKeyDown(kVK_ANSI_J);
+	keyk = isKeyDown(kVK_ANSI_K);
+	keyl = isKeyDown(kVK_ANSI_L);
+	keym = isKeyDown(kVK_ANSI_M);
+	keyn = isKeyDown(kVK_ANSI_N);
+	keyo = isKeyDown(kVK_ANSI_O);
+	keyp = isKeyDown(kVK_ANSI_P);
+	keyq = isKeyDown(kVK_ANSI_Q);
+	keyr = isKeyDown(kVK_ANSI_R);
+	keys = isKeyDown(kVK_ANSI_S);
+	keyt = isKeyDown(kVK_ANSI_T);
+	keyu = isKeyDown(kVK_ANSI_U);
+	keyv = isKeyDown(kVK_ANSI_V);
+	keyw = isKeyDown(kVK_ANSI_W);
+	keyx = isKeyDown(kVK_ANSI_X);
+	keyy = isKeyDown(kVK_ANSI_Y);
+	keyz = isKeyDown(kVK_ANSI_Z);
+	key1 = isKeyDown(kVK_ANSI_1);
+	key2 = isKeyDown(kVK_ANSI_2);
+	key3 = isKeyDown(kVK_ANSI_3);
+	key4 = isKeyDown(kVK_ANSI_4);
+	key5 = isKeyDown(kVK_ANSI_5);
+	key6 = isKeyDown(kVK_ANSI_6);
+	key7 = isKeyDown(kVK_ANSI_7);
+	key8 = isKeyDown(kVK_ANSI_8);
+	key9 = isKeyDown(kVK_ANSI_9);
+	key0 = isKeyDown(kVK_ANSI_0);
+	keyminus  = isKeyDown(kVK_ANSI_Minus);
+	keyback   = isKeyDown(kVK_Delete);
+	keydelete = isKeyDown(kVK_ForwardDelete);
+	keyspace  = isKeyDown(kVK_Space);
+}
 
 @interface QuartzImageView : NSView {
 	CGImageRef _cgImage;
@@ -200,9 +308,6 @@ static void ensureApplication() {
 	static BOOL initialized = NO;
 	if (!initialized) {
 		[NSApplication sharedApplication];
-		if ([NSApp respondsToSelector:@selector(setActivationPolicy:)]) {
-			[NSApp setActivationPolicy:0];
-		}
 		[NSApp activateIgnoringOtherApps:YES];
 		[NSApp finishLaunching];
 		initialized = YES;
