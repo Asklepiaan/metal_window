@@ -130,7 +130,7 @@ macos:
 	-mmacosx-version-min=11.00 -mcpu=apple-a12 -fobjc-arc \
 	main.cpp metal_window.mm metal_mixer.mm ScriptEngine.cpp \
 	-o $(EXECUTABLE)-a12 \
-	-DUSE_MACOS_PLATFORM -DUSE_MACOS_WINDOW -DUSE_MACOS_PNG -DUSE_MACOS_MIXER -DUSE_MACOS_FONT -DUSE_LIB_RUBY -DUSE_WINTERSCRIPT -DUSE_MODERN_MACOS \
+	-DUSE_MACOS_PLATFORM -DUSE_MACOS_WINDOW -DUSE_MACOS_PNG -DUSE_MIXER -DUSE_MACOS_FONT -DUSE_LIB_RUBY -DUSE_WINTERSCRIPT -DUSE_MODERN_MACOS \
 	-I./include/lua/$(VERSIONLUA)/ -I./include/mruby/$(VERSIONMRUBY)/ \
 	-L./libraries/a12 -llua -lm -lmruby \
 	-framework CoreText -framework CoreGraphics -framework ImageIO -framework Cocoa \
@@ -140,7 +140,7 @@ macos:
 	-mmacosx-version-min=11.00 -target x86_64-apple-macos11 -fobjc-arc \
 	main.cpp metal_window.mm metal_mixer.mm ScriptEngine.cpp \
 	-o $(EXECUTABLE)-x64 \
-	-DUSE_MACOS_PLATFORM -DUSE_MACOS_WINDOW -DUSE_MACOS_PNG -DUSE_MACOS_MIXER -DUSE_MACOS_FONT -DUSE_LIB_RUBY -DUSE_WINTERSCRIPT -DUSE_MODERN_MACOS \
+	-DUSE_MACOS_PLATFORM -DUSE_MACOS_WINDOW -DUSE_MACOS_PNG -DUSE_MIXER -DUSE_MACOS_FONT -DUSE_LIB_RUBY -DUSE_WINTERSCRIPT -DUSE_MODERN_MACOS \
 	-I./include/lua/$(VERSIONLUA)/ -I./include/mruby/$(VERSIONMRUBY)/ \
 	-L./libraries/x64 -llua -lm -lmruby \
 	-framework CoreText -framework CoreGraphics -framework ImageIO -framework Cocoa \
@@ -153,9 +153,9 @@ macosppc:
 	$(CXX) $(CSTANDARD) $(UFLAGS) \
 	-Wno-multichar -Wno-deprecated -Wno-subobject-linkage -Wno-endif-labels -Wno-deprecated-declarations \
 	-mmacosx-version-min=10.5 -mcpu=G4 -mtune=G4 -x objective-c++ \
-	main.cpp quartz_window.mm \
+	main.cpp quartz_window.mm quartz_mixer.mm \
 	-o $(EXECUTABLE)-ppc \
-	-DUSE_MACOS_PLATFORM -DUSE_QUARTZ_WINDOW -DUSE_MACOS_PNG -DUSE_QUARTZ_AUDIO -DUSE_QUARTZ_FONT -DUSE_LIB_RUBY -DUSE_LEGACY_MACOS \
+	-DUSE_MACOS_PLATFORM -DUSE_QUARTZ_WINDOW -DUSE_MACOS_PNG -DUSE_MIXER -DUSE_QUARTZ_FONT -DUSE_LIB_RUBY -DUSE_LEGACY_MACOS \
 	-I./include/lua/$(VERSIONLUA)/ -F/Developer/SDKs/MacOSX10.5.sdk/System/Library/Frameworks \
 	-I/Developer/SDKs/MacOSX10.5.sdk/System/Library/Frameworks/CoreGraphics.framework/Headers \
 	-I/Developer/SDKs/MacOSX10.5.sdk/System/Library/Frameworks/ApplicationServices.framework/Frameworks/ImageIO.framework/Headers \
@@ -164,7 +164,7 @@ macosppc:
 	-I/Developer/SDKs/MacOSX10.5.sdk/System/Library/Frameworks/Quartz.framework/Headers \
 	-F/Developer/SDKs/MacOSX10.5.sdk/System/Library/Frameworks \
 	-L./libraries/ppc -llua -lm -lmruby \
-	-framework CoreFoundation -framework Cocoa \
+	-framework CoreFoundation -framework Cocoa -framework QuickTime \
 	-framework AudioToolbox -framework AudioUnit \
 	-framework Quartz -framework Carbon -framework ApplicationServices
 	cp $(EXECUTABLE)-ppc $(EXECUTABLE)
