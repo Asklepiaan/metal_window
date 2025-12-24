@@ -542,7 +542,13 @@ struct PlushImage* captureWindow(MetalWindowHandle handle) {
 		__block struct PlushImage* capturedImage = NULL;
 		__block BOOL done = NO;
 
+		__weak MetalImageView *weakMetalView = metalView;
 		metalView.captureBlock = ^(id<MTLTexture> texture) {
+			MetalImageView *metalView = weakMetalView;
+			if (!metalView) {
+				done = YES;
+				return;
+			}
 			if (!texture) {
 				done = YES;
 				return;
