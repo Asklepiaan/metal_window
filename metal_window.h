@@ -69,6 +69,14 @@ void getMousePosition(MetalWindowHandle window, int* x, int* y);
 bool getMouseButtonState(MetalWindowHandle window, int button);
 void updateKeyboardState();
 
+bool macos_save_png(const char* path, const unsigned char* rgbaPixels, int width, int height);
+unsigned char* macos_load_png(const char* path, int* outWidth, int* outHeight);
+
+void* macos_font_load(const char* fontPath, float fontSize);
+void macos_font_resize(void* fontHandle, float newSize);
+struct PlushImage* macos_font_render(void* fontHandle, const char* utf8Text, int r, int g, int b, double a);
+void macos_font_free(void* fontHandle);
+
 #ifdef __cplusplus
 }
 #endif

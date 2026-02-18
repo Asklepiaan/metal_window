@@ -1,6 +1,12 @@
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <ImageIO/ImageIO.h>
+#import <CoreServices/CoreServices.h>
 #include <Carbon/Carbon.h>
+#include <string>
+#include <vector>
+#include <cmath>
+#include <cstring>
 #include "quartz_window.h"
 #include <string.h>
 
@@ -429,4 +435,384 @@ bool getMouseButtonState(QuartzWindowHandle handle, int button) {
 		case 2: return qw.contentView.mouseButtonMiddle;
 		default: return false;
 	}
+}
+
+bool macos_save_png(const char* path, const unsigned char* rgbaPixels, int width, int height) {
+	if (!path || !rgbaPixels || width <= 0 || height <= 0) return false;
+
+	CGColorSpaceRef colourSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+	if (!colourSpace) return false;
+
+	CGContextRef context = CGBitmapContextCreate(
+		(void*)rgbaPixels,
+		(size_t)width,
+		(size_t)height,
+		8,
+		(size_t)width * 4,
+		colourSpace,
+		kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big
+	);
+	CGColorSpaceRelease(colourSpace);
+	if (!context) return false;
+
+	CGImageRef cgImage = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+	if (!cgImage) return false;
+
+	CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+		kCFAllocatorDefault,
+		(const UInt8*)path,
+		(CFIndex)strlen(path),
+		false
+	);
+	if (!url) {
+		CGImageRelease(cgImage);
+		return false;
+	}
+
+	CGImageDestinationRef destination = CGImageDestinationCreateWithURL(url, kUTTypePNG, 1, NULL);
+	CFRelease(url);
+	if (!destination) {
+		CGImageRelease(cgImage);
+		return false;
+	}
+
+	CGImageDestinationAddImage(destination, cgImage, NULL);
+	bool ok = (bool)CGImageDestinationFinalize(destination);
+	CFRelease(destination);
+	CGImageRelease(cgImage);
+	return ok;
+}
+
+unsigned char* macos_load_png(const char* path, int* outWidth, int* outHeight) {
+	if (outWidth) *outWidth = 0;
+	if (outHeight) *outHeight = 0;
+	if (!path) return nullptr;
+
+	CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+		kCFAllocatorDefault,
+		(const UInt8*)path,
+		(CFIndex)strlen(path),
+		false
+	);
+	if (!url) return nullptr;
+
+	CGImageSourceRef source = CGImageSourceCreateWithURL(url, NULL);
+	CFRelease(url);
+	if (!source) return nullptr;
+
+	CGImageRef cgImage = CGImageSourceCreateImageAtIndex(source, 0, NULL);
+	CFRelease(source);
+	if (!cgImage) return nullptr;
+
+	size_t width = CGImageGetWidth(cgImage);
+	size_t height = CGImageGetHeight(cgImage);
+	size_t bytesPerRow = width * 4;
+	unsigned char* imageData = new unsigned char[bytesPerRow * height];
+
+	CGColorSpaceRef colourSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(
+		imageData,
+		width,
+		height,
+		8,
+		bytesPerRow,
+		colourSpace,
+		kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big
+	);
+	if (!context) {
+		CGImageRelease(cgImage);
+		CGColorSpaceRelease(colourSpace);
+		delete[] imageData;
+		return nullptr;
+	}
+
+	CGContextSetBlendMode(context, kCGBlendModeCopy);
+	CGContextSetRGBFillColor(context, 0, 0, 0, 0);
+	CGContextFillRect(context, CGRectMake(0, 0, width, height));
+	CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
+
+	CGContextRelease(context);
+	CGImageRelease(cgImage);
+	CGColorSpaceRelease(colourSpace);
+
+	for (size_t i = 0; i < width * height * 4; i += 4) {
+		if (imageData[i + 3] == 0) {
+			imageData[i] = 0;
+			imageData[i + 1] = 0;
+			imageData[i + 2] = 0;
+		}
+	}
+
+	if (outWidth) *outWidth = (int)width;
+	if (outHeight) *outHeight = (int)height;
+	return imageData;
+}
+
+struct WMATSUFont {
+	ATSUFontID fontID = 0;
+	ATSUStyle style = NULL;
+	float size = 12.0f;
+};
+
+struct WMATSUTextLine {
+	ATSUTextLayout layout = NULL;
+	UniChar* chars = NULL;
+	UInt32 length = 0;
+	Rect bounds = {0, 0, 0, 0};
+	int lineHeight = 0;
+};
+
+static PlushImage make_empty_image_q() {
+	PlushImage img;
+	img.width = 0;
+	img.height = 0;
+	img.pixels = NULL;
+	img.reflectivityWidth = 0;
+	img.reflectivityHeight = 0;
+	img.reflectivity = NULL;
+	return img;
+}
+
+void* macos_font_load(const char* fontPath, float fontSize) {
+	if (!fontPath) return nullptr;
+	NSString* requested = [NSString stringWithUTF8String:fontPath];
+	if (!requested) return nullptr;
+
+	NSString* familyName = [[requested lastPathComponent] stringByDeletingPathExtension];
+	if (!familyName || [familyName length] == 0) {
+		familyName = requested;
+	}
+
+	Str255 familyNamePascal = {0};
+	Boolean converted = CFStringGetPascalString(
+		(CFStringRef)familyName,
+		familyNamePascal,
+		sizeof(familyNamePascal),
+		kCFStringEncodingMacRoman
+	);
+
+	FMFontFamily family = kInvalidFontFamily;
+	if (converted) {
+		family = FMGetFontFamilyFromName(familyNamePascal);
+	}
+	if (family == kInvalidFontFamily) {
+		const unsigned char defaultFamily[] = {9, 'H', 'e', 'l', 'v', 'e', 't', 'i', 'c', 'a'};
+		family = FMGetFontFamilyFromName(defaultFamily);
+	}
+	if (family == kInvalidFontFamily) return nullptr;
+
+	FMFont font = kInvalidFont;
+	FMFontStyle actualStyle = 0;
+	OSStatus status = FMGetFontFromFontFamilyInstance(family, 0, &font, &actualStyle);
+	(void)actualStyle;
+	if (status != noErr || font == kInvalidFont) return nullptr;
+
+	ATSUFontID fontID = (ATSUFontID)font;
+
+	WMATSUFont* f = new WMATSUFont();
+	f->fontID = fontID;
+	f->size = fontSize;
+	ATSUCreateStyle(&f->style);
+
+	ATSUAttributeTag tags[] = { kATSUFontTag, kATSUSizeTag };
+	ByteCount sizes[] = { sizeof(ATSUFontID), sizeof(Fixed) };
+	Fixed fixedSize = (Fixed)(fontSize * 65536.0f);
+	ATSUAttributeValuePtr values[] = { &f->fontID, &fixedSize };
+	ATSUSetAttributes(f->style, (ItemCount)(sizeof(tags)/sizeof(tags[0])), tags, sizes, values);
+
+	return (void*)f;
+}
+
+void macos_font_resize(void* fontHandle, float newSize) {
+	WMATSUFont* font = (WMATSUFont*)fontHandle;
+	if (!font || !font->style) return;
+	font->size = newSize;
+	ATSUAttributeTag tag = kATSUSizeTag;
+	ByteCount size = sizeof(Fixed);
+	Fixed fixedSize = (Fixed)(newSize * 65536.0f);
+	ATSUAttributeValuePtr value = &fixedSize;
+	ATSUSetAttributes(font->style, 1, &tag, &size, &value);
+}
+
+struct PlushImage* macos_font_render(void* fontHandle, const char* utf8Text, int colourR, int colourG, int colourB, double colourA) {
+	(void)colourA;
+	WMATSUFont* font = (WMATSUFont*)fontHandle;
+	if (!font || !font->style || !utf8Text) return nullptr;
+
+	std::string text(utf8Text);
+	if (text.empty()) {
+		return new PlushImage(make_empty_image_q());
+	}
+
+	RGBColor rgbColor;
+	rgbColor.red = (UInt16)(colourR * 257);
+	rgbColor.green = (UInt16)(colourG * 257);
+	rgbColor.blue = (UInt16)(colourB * 257);
+
+	std::vector<std::string> lines;
+	size_t start = 0;
+	while (start <= text.size()) {
+		size_t nl = text.find('\n', start);
+		std::string lineText = (nl == std::string::npos) ? text.substr(start) : text.substr(start, nl - start);
+		if (!lineText.empty() && lineText.back() == '\r') {
+			lineText.pop_back();
+		}
+		lines.push_back(lineText);
+		if (nl == std::string::npos) break;
+		start = nl + 1;
+	}
+	if (lines.empty()) {
+		lines.push_back("");
+	}
+
+	int fallbackLineHeight = (int)std::max(1.0f, ceilf(font->size * 1.2f));
+	int width = 0;
+	int height = 0;
+
+	std::vector<WMATSUTextLine> layoutLines;
+	layoutLines.reserve(lines.size());
+
+	auto disposeLayoutLines = [&layoutLines]() {
+		for (auto& line : layoutLines) {
+			if (line.layout) {
+				ATSUDisposeTextLayout(line.layout);
+				line.layout = NULL;
+			}
+			if (line.chars) {
+				free(line.chars);
+				line.chars = NULL;
+			}
+		}
+	};
+
+	for (const std::string& lineText : lines) {
+		WMATSUTextLine line;
+		if (lineText.empty()) {
+			line.lineHeight = fallbackLineHeight;
+			layoutLines.push_back(line);
+			height += line.lineHeight;
+			continue;
+		}
+
+		CFStringRef cf = CFStringCreateWithCString(kCFAllocatorDefault, lineText.c_str(), kCFStringEncodingUTF8);
+		if (!cf) {
+			disposeLayoutLines();
+			return nullptr;
+		}
+		CFIndex len = CFStringGetLength(cf);
+		line.length = (UInt32)len;
+		line.chars = (UniChar*)malloc(sizeof(UniChar) * (size_t)len);
+		if (!line.chars) {
+			CFRelease(cf);
+			disposeLayoutLines();
+			return nullptr;
+		}
+		CFStringGetCharacters(cf, CFRangeMake(0, len), line.chars);
+		CFRelease(cf);
+
+		UInt32 runLength = line.length;
+		OSStatus status = ATSUCreateTextLayoutWithTextPtr(
+			line.chars,
+			kATSUFromTextBeginning,
+			kATSUToTextEnd,
+			line.length,
+			1,
+			&runLength,
+			(ATSUStyle*)&font->style,
+			&line.layout
+		);
+		if (status != noErr || !line.layout) {
+			free(line.chars);
+			disposeLayoutLines();
+			return nullptr;
+		}
+
+		ATSUAttributeTag colorTag = kATSUColorTag;
+		ByteCount colorSize = sizeof(RGBColor);
+		ATSUAttributeValuePtr colorValue = &rgbColor;
+		ATSUSetLayoutControls(line.layout, 1, &colorTag, &colorSize, &colorValue);
+
+		status = ATSUMeasureTextImage(line.layout, kATSUFromTextBeginning, kATSUToTextEnd, 0, 0, &line.bounds);
+		if (status != noErr) {
+			ATSUDisposeTextLayout(line.layout);
+			free(line.chars);
+			disposeLayoutLines();
+			return nullptr;
+		}
+
+		int lineWidth = line.bounds.right - line.bounds.left;
+		line.lineHeight = line.bounds.bottom - line.bounds.top;
+		if (line.lineHeight <= 0) {
+			line.lineHeight = fallbackLineHeight;
+		}
+
+		if (lineWidth > width) {
+			width = lineWidth;
+		}
+		height += line.lineHeight;
+		layoutLines.push_back(line);
+	}
+
+	if (width <= 0) width = 1;
+	if (height <= 0) height = 1;
+
+	size_t bytesPerRow = (size_t)width * 4;
+	unsigned char* pixels = new unsigned char[bytesPerRow * (size_t)height];
+	memset(pixels, 0, bytesPerRow * (size_t)height);
+
+	CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(
+		pixels,
+		(size_t)width,
+		(size_t)height,
+		8,
+		bytesPerRow,
+		cs,
+		kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big
+	);
+	CGColorSpaceRelease(cs);
+	if (!context) {
+		delete[] pixels;
+		disposeLayoutLines();
+		return nullptr;
+	}
+
+	CGContextSetRGBFillColor(context, 1, 1, 1, 0);
+	CGContextFillRect(context, CGRectMake(0, 0, width, height));
+
+	CGContextTranslateCTM(context, 0, height);
+	CGContextScaleCTM(context, 1.0, -1.0);
+
+	int cursorY = 0;
+	for (const auto& line : layoutLines) {
+		if (line.layout) {
+			ATSUAttributeTag contextTag = kATSUCGContextTag;
+			ByteCount contextSize = sizeof(CGContextRef);
+			ATSUAttributeValuePtr contextValue = &context;
+			ATSUSetLayoutControls(line.layout, 1, &contextTag, &contextSize, &contextValue);
+
+			Fixed x = (Fixed)((-line.bounds.left) * 65536.0);
+			Fixed y = (Fixed)((cursorY + line.lineHeight) * 65536.0);
+			ATSUDrawText(line.layout, kATSUFromTextBeginning, kATSUToTextEnd, x, y);
+		}
+		cursorY += line.lineHeight;
+	}
+
+	CGContextRelease(context);
+	disposeLayoutLines();
+
+	PlushImage out = make_empty_image_q();
+	out.width = width;
+	out.height = height;
+	out.pixels = pixels;
+	PlushImage* outPtr = new PlushImage(out);
+	return outPtr;
+}
+
+void macos_font_free(void* fontHandle) {
+	WMATSUFont* font = (WMATSUFont*)fontHandle;
+	if (!font) return;
+	if (font->style) ATSUDisposeStyle(font->style);
+	delete font;
 }

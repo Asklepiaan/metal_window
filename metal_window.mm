@@ -2,7 +2,14 @@
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <ImageIO/ImageIO.h>
+#import <CoreServices/CoreServices.h>
+#import <CoreText/CoreText.h>
 #include <Carbon/Carbon.h>
+#include <string>
+#include <vector>
+#include <cmath>
+#include <cstring>
 #include "metal_window.h"
 
 #if !__has_feature(objc_arc)
@@ -647,4 +654,346 @@ bool getMouseButtonState(MetalWindowHandle handle, int button) {
 			default: return false;
 		}
 	}
+}
+
+bool macos_save_png(const char* path, const unsigned char* rgbaPixels, int width, int height) {
+	if (!path || !rgbaPixels || width <= 0 || height <= 0) return false;
+
+	CGColorSpaceRef colourSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+	if (!colourSpace) return false;
+
+	CGContextRef context = CGBitmapContextCreate(
+		(void*)rgbaPixels,
+		(size_t)width,
+		(size_t)height,
+		8,
+		(size_t)width * 4,
+		colourSpace,
+		kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big
+	);
+	CGColorSpaceRelease(colourSpace);
+	if (!context) return false;
+
+	CGImageRef cgImage = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+	if (!cgImage) return false;
+
+	CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+		kCFAllocatorDefault,
+		(const UInt8*)path,
+		(CFIndex)strlen(path),
+		false
+	);
+	if (!url) {
+		CGImageRelease(cgImage);
+		return false;
+	}
+
+	CGImageDestinationRef destination = CGImageDestinationCreateWithURL(url, kUTTypePNG, 1, NULL);
+	CFRelease(url);
+	if (!destination) {
+		CGImageRelease(cgImage);
+		return false;
+	}
+
+	CGImageDestinationAddImage(destination, cgImage, NULL);
+	bool ok = (bool)CGImageDestinationFinalize(destination);
+	CFRelease(destination);
+	CGImageRelease(cgImage);
+	return ok;
+}
+
+unsigned char* macos_load_png(const char* path, int* outWidth, int* outHeight) {
+	if (outWidth) *outWidth = 0;
+	if (outHeight) *outHeight = 0;
+	if (!path) return nullptr;
+
+	CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+		kCFAllocatorDefault,
+		(const UInt8*)path,
+		(CFIndex)strlen(path),
+		false
+	);
+	if (!url) return nullptr;
+
+	CGImageSourceRef source = CGImageSourceCreateWithURL(url, NULL);
+	CFRelease(url);
+	if (!source) return nullptr;
+
+	CGImageRef cgImage = CGImageSourceCreateImageAtIndex(source, 0, NULL);
+	CFRelease(source);
+	if (!cgImage) return nullptr;
+
+	size_t width = CGImageGetWidth(cgImage);
+	size_t height = CGImageGetHeight(cgImage);
+	size_t bytesPerRow = width * 4;
+	unsigned char* imageData = new unsigned char[bytesPerRow * height];
+
+	CGColorSpaceRef colourSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(
+		imageData,
+		width,
+		height,
+		8,
+		bytesPerRow,
+		colourSpace,
+		kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big
+	);
+	if (!context) {
+		CGImageRelease(cgImage);
+		CGColorSpaceRelease(colourSpace);
+		delete[] imageData;
+		return nullptr;
+	}
+
+	CGContextSetBlendMode(context, kCGBlendModeCopy);
+	CGContextSetRGBFillColor(context, 0, 0, 0, 0);
+	CGContextFillRect(context, CGRectMake(0, 0, width, height));
+	CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
+
+	CGContextRelease(context);
+	CGImageRelease(cgImage);
+	CGColorSpaceRelease(colourSpace);
+
+	// Ensure fully transparent pixels have RGB=0.
+	for (size_t i = 0; i < width * height * 4; i += 4) {
+		if (imageData[i + 3] == 0) {
+			imageData[i] = 0;
+			imageData[i + 1] = 0;
+			imageData[i + 2] = 0;
+		}
+	}
+
+	if (outWidth) *outWidth = (int)width;
+	if (outHeight) *outHeight = (int)height;
+	return imageData;
+}
+
+class WMCoreTextFont {
+public:
+	CTFontRef fontRef;
+	WMCoreTextFont(CTFontRef f) : fontRef(f) {}
+	~WMCoreTextFont() { if (fontRef) CFRelease(fontRef); }
+	WMCoreTextFont(const WMCoreTextFont&) = delete;
+	WMCoreTextFont& operator=(const WMCoreTextFont&) = delete;
+};
+
+struct WMTextLineLayout {
+	CTLineRef line;
+	CGFloat ascent;
+	CGFloat descent;
+	CGFloat leading;
+	CGFloat advance;
+};
+
+void* macos_font_load(const char* fontPath, float fontSize) {
+	if (!fontPath) return nullptr;
+	std::string path(fontPath);
+	CFURLRef fontURL = CFURLCreateFromFileSystemRepresentation(
+		kCFAllocatorDefault,
+		(const UInt8*)path.c_str(),
+		(CFIndex)path.length(),
+		false
+	);
+	if (!fontURL) return nullptr;
+
+	CGDataProviderRef dataProvider = CGDataProviderCreateWithURL(fontURL);
+	CFRelease(fontURL);
+	if (!dataProvider) return nullptr;
+
+	CGFontRef cgFont = CGFontCreateWithDataProvider(dataProvider);
+	CGDataProviderRelease(dataProvider);
+	if (!cgFont) return nullptr;
+
+	CTFontRef font = CTFontCreateWithGraphicsFont(cgFont, fontSize, NULL, NULL);
+	CGFontRelease(cgFont);
+	if (!font) return nullptr;
+
+	return (void*)new WMCoreTextFont(font);
+}
+
+void macos_font_resize(void* fontHandle, float newSize) {
+	WMCoreTextFont* font = (WMCoreTextFont*)fontHandle;
+	if (!font || !font->fontRef) return;
+
+	CTFontDescriptorRef descriptor = CTFontCopyFontDescriptor(font->fontRef);
+	CGAffineTransform transform = CTFontGetMatrix(font->fontRef);
+	CTFontRef newFont = CTFontCreateWithFontDescriptor(descriptor, newSize, &transform);
+	if (descriptor) CFRelease(descriptor);
+
+	if (newFont) {
+		CFRelease(font->fontRef);
+		font->fontRef = newFont;
+	}
+}
+
+static PlushImage make_empty_image() {
+	PlushImage img;
+	img.width = 0;
+	img.height = 0;
+	img.pixels = NULL;
+	img.reflectivityWidth = 0;
+	img.reflectivityHeight = 0;
+	img.reflectivity = NULL;
+	return img;
+}
+
+struct PlushImage* macos_font_render(void* fontHandle, const char* utf8Text, int colourR, int colourG, int colourB, double colourA) {
+	WMCoreTextFont* font = (WMCoreTextFont*)fontHandle;
+	if (!font || !font->fontRef || !utf8Text) return nullptr;
+
+	std::string text(utf8Text);
+	if (text.empty()) {
+		PlushImage* out = new PlushImage(make_empty_image());
+		return out;
+	}
+
+	CFDictionaryRef attributes = NULL;
+	CFMutableDictionaryRef attr = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	if (!attr) return nullptr;
+	CFDictionarySetValue(attr, kCTFontAttributeName, font->fontRef);
+
+	CGFloat components[4] = { (CGFloat)colourR/255.0f, (CGFloat)colourG/255.0f, (CGFloat)colourB/255.0f, (CGFloat)colourA/255.0f };
+	CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+	CGColorRef fg = CGColorCreate(cs, components);
+	CGColorSpaceRelease(cs);
+	if (fg) CFDictionarySetValue(attr, kCTForegroundColorAttributeName, fg);
+	attributes = attr;
+
+	std::vector<std::string> lines;
+	size_t start = 0;
+	while (start <= text.size()) {
+		size_t nl = text.find('\n', start);
+		std::string lineText = (nl == std::string::npos) ? text.substr(start) : text.substr(start, nl - start);
+		if (!lineText.empty() && lineText.back() == '\r') {
+			lineText.pop_back();
+		}
+		lines.push_back(lineText);
+		if (nl == std::string::npos) break;
+		start = nl + 1;
+	}
+	if (lines.empty()) {
+		lines.push_back("");
+	}
+
+	std::vector<WMTextLineLayout> layout;
+	layout.reserve(lines.size());
+	CGFloat maxAdvance = 0;
+	CGFloat totalHeight = 0;
+	CGFloat fallbackLineHeight = std::max((CGFloat)1.0, ceil(CTFontGetSize(font->fontRef) * 1.2));
+
+	for (const std::string& lineText : lines) {
+		CFStringRef cfLine = CFStringCreateWithCString(kCFAllocatorDefault, lineText.c_str(), kCFStringEncodingUTF8);
+		if (!cfLine) {
+			for (const auto& item : layout) {
+				CFRelease(item.line);
+			}
+			if (fg) CGColorRelease(fg);
+			CFRelease(attr);
+			return nullptr;
+		}
+
+		CFAttributedStringRef attributedString = CFAttributedStringCreate(kCFAllocatorDefault, cfLine, attributes);
+		CFRelease(cfLine);
+		if (!attributedString) {
+			for (const auto& item : layout) {
+				CFRelease(item.line);
+			}
+			if (fg) CGColorRelease(fg);
+			CFRelease(attr);
+			return nullptr;
+		}
+
+		CTLineRef line = CTLineCreateWithAttributedString(attributedString);
+		CFRelease(attributedString);
+		if (!line) {
+			for (const auto& item : layout) {
+				CFRelease(item.line);
+			}
+			if (fg) CGColorRelease(fg);
+			CFRelease(attr);
+			return nullptr;
+		}
+
+		CGFloat ascent = 0;
+		CGFloat descent = 0;
+		CGFloat leading = 0;
+		CGFloat advance = (CGFloat)CTLineGetTypographicBounds(line, &ascent, &descent, &leading);
+		CGFloat lineHeight = ascent + descent + leading;
+		if (lineHeight <= 0) {
+			lineHeight = fallbackLineHeight;
+		}
+
+		if (advance > maxAdvance) {
+			maxAdvance = advance;
+		}
+		totalHeight += lineHeight;
+		layout.push_back({line, ascent, descent, leading, advance});
+	}
+
+	if (fg) CGColorRelease(fg);
+	CFRelease(attr);
+
+	int width = (int)ceil(maxAdvance);
+	int height = (int)ceil(totalHeight);
+	if (width <= 0) width = 1;
+	if (height <= 0) height = 1;
+
+	size_t bytesPerRow = (size_t)width * 4;
+	unsigned char* pixels = new unsigned char[bytesPerRow * (size_t)height];
+	memset(pixels, 0, bytesPerRow * (size_t)height);
+
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(
+		pixels,
+		(size_t)width,
+		(size_t)height,
+		8,
+		bytesPerRow,
+		colorSpace,
+		kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big
+	);
+	CGColorSpaceRelease(colorSpace);
+
+	if (!context) {
+		delete[] pixels;
+		for (const auto& item : layout) {
+			CFRelease(item.line);
+		}
+		return nullptr;
+	}
+
+	CGContextSetRGBFillColor(context, 1, 1, 1, 0);
+	CGContextFillRect(context, CGRectMake(0, 0, width, height));
+	CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+
+	CGFloat cursorY = (CGFloat)height;
+	for (const auto& item : layout) {
+		CGFloat lineHeight = item.ascent + item.descent + item.leading;
+		if (lineHeight <= 0) {
+			lineHeight = fallbackLineHeight;
+		}
+		cursorY -= item.ascent;
+		CGContextSetTextPosition(context, 0, cursorY);
+		CTLineDraw(item.line, context);
+		cursorY -= (item.descent + item.leading);
+	}
+
+	CGContextRelease(context);
+	for (const auto& item : layout) {
+		CFRelease(item.line);
+	}
+
+	PlushImage out = make_empty_image();
+	out.width = width;
+	out.height = height;
+	out.pixels = pixels;
+	PlushImage* outPtr = new PlushImage(out);
+	return outPtr;
+}
+
+void macos_font_free(void* fontHandle) {
+	WMCoreTextFont* font = (WMCoreTextFont*)fontHandle;
+	delete font;
 }

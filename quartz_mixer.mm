@@ -101,7 +101,7 @@ void* OpenMP3File(const char* filePath) {
 					duration = GetMovieDuration(movie);
 					SetMovieAudioMute(movie, false, 0);
 					GoToBeginningOfMovie(movie);
-					PrerollMovie(movie, GetMovieTime(movie, NULL), NULL);
+						PrerollMovie(movie, GetMovieTime(movie, NULL), 0);
 				}
 			}
 		}

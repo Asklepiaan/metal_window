@@ -1,3 +1,7 @@
 .DS_Store
 ScriptEngine.hpp
 ScriptEngine.cpp
+ai_bindings.hpp
+ruby_compat.h
+platform_layer.h
+platform_layer.cpp
